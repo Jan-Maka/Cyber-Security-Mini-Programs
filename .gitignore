@@ -1,0 +1,6 @@
+__pycache__/
+Crypt-Socket/client/user_keys/
+Crypt-Socket/server/server_keys/
+Crypt-Socket/server/certificates/
+Crypt-SocKet/server/user_public_keys/
+Crypt-Socket/public_keys/

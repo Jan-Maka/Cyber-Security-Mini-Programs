@@ -10,7 +10,7 @@ class User:
         if isinstance(password, bytes):
             self.password = password
         else:
-            self.password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+            self.password = self.hash_password(password)
         self.public_key = public_key
         self.session_key = None
         self.connection = connection
@@ -21,8 +21,13 @@ class User:
     def hash_username(username):
         return hashlib.sha256(username.encode()).hexdigest()
     
-    def verify_password(self, password):
-        return bcrypt.checkpw(password.encode(), self.password)
+    @staticmethod
+    def hash_password(password):
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+
+    @staticmethod
+    def verify_password(plaintext_password, password):
+        return bcrypt.checkpw(plaintext_password.encode(), password)
 
 
     def to_dict(self):
@@ -33,7 +38,8 @@ class User:
             "public_key":self.public_key,
             "certificate":self.certificate,
             "session_key":self.session_key,
-            "message_queue":self.message_queue
+            "message_queue":self.message_queue,
+            "connection":self.connection
         }
     
     @classmethod

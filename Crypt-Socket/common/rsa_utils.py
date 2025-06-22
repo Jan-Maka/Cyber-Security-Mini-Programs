@@ -1,4 +1,4 @@
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
@@ -80,3 +80,48 @@ def save_certificate(path, certificate):
 def load_certficate(path):
     with path.open('rb') as f:
         return f.read()
+
+def verify_certificate(user_cert_pem, server_public_key_pem):
+    server_public_key = serialization.load_pem_public_key(server_public_key_pem)
+    user_cert = x509.load_pem_x509_certificate(user_cert_pem)
+    try:
+        server_public_key.verify(
+            user_cert.signature,
+            user_cert.tbs_certificate_bytes,
+            padding.PKCS1v15(),
+            user_cert.signature_hash_algorithm, 
+        )
+        return True
+    except Exception as e:
+        print("Certificate Invalid")
+        return False
+
+def get_user_public_key_from_certificate(user_cert_pem):
+    user_cert = x509.load_pem_x509_certificate(user_cert_pem)
+    public_key_pem = user_cert.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return public_key_pem
+
+
+def sign_data(private_key_pem, data):
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    return private_key.sign(
+        data,
+        padding.PKCS1v15(),
+        hashes.SHA256()
+    )
+
+def verify_signatrue(public_key_pem, data, signature):
+    public_key = serialization.load_pem_public_key(public_key_pem)
+    try:
+        public_key.verify(
+            signature,
+            data,
+            padding.PKCS1v15(),
+            hashes.SHA256()
+        )
+        return True
+    except Exception:
+        return False
