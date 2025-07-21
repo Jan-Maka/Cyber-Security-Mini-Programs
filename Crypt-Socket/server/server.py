@@ -16,16 +16,9 @@ PORT = 65432
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVER_KEYS_DIR = Path("server/server_keys")
 USER_PUBLIC_KEYS_STORE = Path("server/user_public_keys")
-PUBLIC_KEYS_STORE = PROJECT_ROOT / "public_keys"
+PUBLIC_KEYS_DIR = Path("public_keys")
 PUBLIC_KEY_PATH =  SERVER_KEYS_DIR / "server_public.pem"
 PRIVATE_KEY_PATH = SERVER_KEYS_DIR / "server_private.pem"
-SERVER_PUBLIC_KEY = load_rsa_key_from_file(SERVER_KEYS_DIR / "server_public.pem")
-SERVER_PRIVATE_KEY = load_rsa_key_from_file(SERVER_KEYS_DIR / "server_private.pem")
-SERVER_CERTIFICATE_STORE = Path("server/certificates")
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST,PORT))
-server.listen(5)
 
 #Before server is booted up check server RSA keys exist and if not generate keys
 def check_server_keys_exist():
@@ -34,10 +27,18 @@ def check_server_keys_exist():
         private_key, public_key = generate_rsa_key_pair()
         save_rsa_key_to_file(PRIVATE_KEY_PATH, private_key)
         save_rsa_key_to_file(PUBLIC_KEY_PATH,public_key)
-        save_rsa_key_to_file(PUBLIC_KEYS_STORE, public_key)
+        save_rsa_key_to_file(PUBLIC_KEYS_DIR / "server_public.pem", public_key)
         print("**SERVER RSA KEYS GENERATED AND SAVED!!**")
 
 check_server_keys_exist()
+
+SERVER_PUBLIC_KEY = load_rsa_key_from_file(SERVER_KEYS_DIR / "server_public.pem")
+SERVER_PRIVATE_KEY = load_rsa_key_from_file(SERVER_KEYS_DIR / "server_private.pem")
+SERVER_CERTIFICATE_STORE = Path("server/certificates")
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind((HOST,PORT))
+server.listen(5)
 
 users = {
 }
@@ -126,6 +127,7 @@ def handle_login(data, clientsocket):
     
     user = users.get(user_hash)
     user_payload_json = json.dumps({
+        "user_id":user["user_id"],
         "username":user["username"],
         "message_queue":user["message_queue"],
         "public_key":user["public_key"]
@@ -135,15 +137,39 @@ def handle_login(data, clientsocket):
     user["session_key"] = session_key
     user["connection"] = clientsocket
 
+    users[user_hash] = user
+
     send_with_flag(clientsocket, "LOGIN_SESH_KEY", encrypt_with_rsa(user_public_key, session_key))
     nonce,ciphertext,tag = encrypt_with_aes_gcm(session_key,user_payload_json)
     send_aes_encrypted_data_with_flag(clientsocket, "LOGIN_SUCCESS", nonce,tag,ciphertext)
 
-def handle_send_msg():
-    pass
+def handle_send_msg(clientsocket, data):
+    message_payload = json.loads(data)
+    reciever = users.get(message_payload["reciever"])
+    print(  )
+    sender = users.get(message_payload["sender"])
+    msg_dict = {
+        "sender": sender["username"],
+        "nonce": message_payload["nonce"],
+        "tag": message_payload["tag"],
+        "ciphertext": message_payload["ciphertext"],
+        "temp_key": message_payload["temp_key"],
+    }
 
-def handle_read_msgs():
-    pass
+    reciever["message_queue"].append(msg_dict)
+    users[message_payload["reciever"]] = reciever
+    send_with_flag(clientsocket, "MSG_SENT", "\n**MESSAGE SENT SECURLEY!**\n".encode())
+  
+#Checks for logged in user messages and sends them over encrypted with shared session key
+def handle_read_msgs(user_id, clientsocket):
+    user = users.get(user_id)
+    message_queue = user["message_queue"]
+    session_key = user["session_key"]
+    message_queue_json = json.dumps(message_queue)
+    nonce, ciphertext, tag = encrypt_with_aes_gcm(session_key, message_queue_json.encode())
+    send_aes_encrypted_data_with_flag(clientsocket, "MESSAGES", nonce, tag, ciphertext)
+    user["message_queue"] = []
+    users[user_id] = user
 
 while True:
     clientsocket, address = server.accept()
@@ -165,10 +191,10 @@ while True:
                 case "LOGIN":
                     handle_login(data,clientsocket)
                     print("\n***USER LOGGED IN!***\n")
-                case "MSG":
-                    handle_send_msg()
+                case "SEND_MSG":
+                    handle_send_msg(clientsocket,data)
                 case "READ_MSGS":
-                    handle_read_msgs()
+                    handle_read_msgs(data.decode(), clientsocket)
                 case _:
                     print(f"UNKNOWN OPERATION: {flag}")
     except ConnectionError:

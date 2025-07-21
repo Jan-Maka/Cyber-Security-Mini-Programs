@@ -1,8 +1,9 @@
 import socket
 import json
 import base64
+import time
 from pathlib import Path
-from common.rsa_utils import generate_rsa_key_pair, save_rsa_key_to_file, load_rsa_key_from_file, encrypt_with_rsa, save_certificate, load_certficate, sign_data, decrypt_with_rsa
+from common.rsa_utils import generate_rsa_key_pair, save_rsa_key_to_file, load_rsa_key_from_file, encrypt_with_rsa, save_certificate, load_certficate, sign_data, decrypt_with_rsa, verify_signatrue
 from common.user import User
 from common.socket_utils import send_with_flag, recv_with_flag, send_aes_encrypted_data_with_flag
 from common.aes_utils import generate_aes_key, encrypt_with_aes_gcm, unpack_aes_gcm_data, decrypt_with_aes_gcm
@@ -20,7 +21,6 @@ session_key = None
 
 server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_sock.connect((HOST,PORT))
-
 
 def check_user_exists(username):
     hashed_username = User.hash_username(username)
@@ -45,6 +45,8 @@ def get_nonce():
 
 # Handles communciation with server when a user is trying to login to the server
 def login():
+    global logged_in_user
+    global session_key
     print("\n**USER LOGIN**\n")
     username_input = ""
     while True:
@@ -110,6 +112,7 @@ def register():
 
     save_rsa_key_to_file(user_dir / "private.pem" ,private_key)
     save_rsa_key_to_file(user_dir /"public.pem",public_key)
+    save_rsa_key_to_file(PUBLIC_KEYS_STORE/ f"{username_input}_public.pem", public_key)
 
     user = User(username_input, password_input, public_key)
 
@@ -124,12 +127,90 @@ def register():
 
     print("\n**REGISTRATION COMPLETE**\n")
 
+def read_messages():
+    print("\n**USER MESSAGES**\n")
+    send_with_flag(server_sock, "READ_MSGS", logged_in_user["user_id"].encode())
+    flag, response = recv_with_flag(server_sock)
+    if flag != "MESSAGES": return
+
+    nonce, tag, ciphertext = unpack_aes_gcm_data(response)
+    messages = json.loads(decrypt_with_aes_gcm(nonce,tag,ciphertext, session_key))
+
+    if len(messages) == 0: print("No new messages!")
+    for msg in messages:
+        temp_msg_key = decrypt_with_rsa(logged_in_user["private_key"],base64.b64decode(msg["temp_key"]))
+        message = json.loads(decrypt_with_aes_gcm(base64.b64decode(msg["nonce"]), base64.b64decode(msg["tag"]),base64.b64decode(msg["ciphertext"]), temp_msg_key))
+
+        signed_data = json.dumps({
+            "content": message["content"],
+            "timestamp": message["timestamp"]
+        }).encode()
+        
+        sender_pub_key = load_rsa_key_from_file(PUBLIC_KEYS_STORE / f"{msg['sender']}_public.pem")
+        is_signature_valid = verify_signatrue(sender_pub_key,signed_data,base64.b64decode(message["signature"]))
+        
+        if is_signature_valid:
+            print("--------------------")
+            print(f"From: {msg['sender']}")
+            print(f"Time: {message['timestamp']}")
+            print(f"Message: {message['content']}")
+            print("--------------------")
+        else:
+            print("--------------------")
+            print("SIGNATURE NOT VALID MESSAGE ALTERED!")
+            print("--------------------")
+
+
+    print("\n**END OF MESSAGES**\n")
+
+def send_message():
+    print("\n**SEND MESSAGE TO USER**\n")
+
+    reciever = ""
+    while True:
+        reciever = input("Enter the user to message: ")
+        if not check_user_exists(reciever): print("USER DOES NOT EXIST")
+        else: break
+
+    user_message = input("Enter the message for user: ")
+    time_stamp = int(time.time())
+    data_to_sign = json.dumps({
+        "content": user_message,
+        "timestamp": time_stamp
+    }).encode()
+
+    signature = sign_data(logged_in_user["private_key"], data_to_sign)
+    inner_payload = json.dumps({
+        "content": user_message,
+        "timestamp": time_stamp,
+        "signature": base64.b64encode(signature).decode()
+    }).encode()
+
+    msg_temp_key = generate_aes_key()
+    print(msg_temp_key)
+    nonce, ciphertext, tag = encrypt_with_aes_gcm(msg_temp_key, inner_payload)
+    encrypted_temp_key = encrypt_with_rsa(load_rsa_key_from_file(PUBLIC_KEYS_STORE / f"{reciever}_public.pem"),msg_temp_key)
+
+    message_payload = json.dumps({
+        "reciever": User.hash_username(reciever),
+        "sender": logged_in_user["user_id"],
+        "temp_key": base64.b64encode(encrypted_temp_key).decode(),
+        "nonce": base64.b64encode(nonce).decode(),
+        "tag": base64.b64encode(tag).decode(),
+        "ciphertext": base64.b64encode(ciphertext).decode()
+    }).encode()
+    
+    send_with_flag(server_sock,"SEND_MSG", message_payload)
+    flag, data = recv_with_flag(server_sock)
+    if flag == "MSG_SENT":  print(data.decode())
+
 def prompt_user_input():
     if logged_in_user is None:
         print("To login enter 'L':")
         print("To Register enter 'R':")
     else:
-        pass
+        print("To read your messages enter: 'READ':")
+        print("To send a message to a user enter: 'SEND':")
     print("To Quit type 'QUIT':")
     return input("Command: ")
 
@@ -143,6 +224,10 @@ while user_input.upper() != "QUIT":
             register()
         case 'quit':
             pass
+        case 'read':
+            read_messages()
+        case 'send':
+            send_message()
         case _:
             print("Invalid input. Please enter 'L' to login or 'R' to register.")
 
