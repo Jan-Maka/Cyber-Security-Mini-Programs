@@ -99,6 +99,8 @@ def handle_register(data,aes_temp_key):
     user_certificate = generate_x509_certificate(user_data["public_key"].encode(), SERVER_PRIVATE_KEY,user_data["username"])
     save_certificate(SERVER_CERTIFICATE_STORE / f"{user_data['username']}_certificate.pem", user_certificate)
     send_with_flag(clientsocket, "CERT", user_certificate)
+    print("\n**USER REGISTERED TO SERVER**\n")
+
 
 #Verifys and authenticates credentials and generates a session key which is going to be used for further communication between client and server
 def handle_login(data, clientsocket):
@@ -145,9 +147,13 @@ def handle_login(data, clientsocket):
     nonce,ciphertext,tag = encrypt_with_aes_gcm(session_key,user_payload_json)
     send_aes_encrypted_data_with_flag(clientsocket, "LOGIN_SUCCESS", nonce,tag,ciphertext)
 
+    print("\n***USER LOGGED IN!***\n")
+
+
+#Handles the sending of messages
 def handle_send_msg(clientsocket, data):
     message_payload = json.loads(data)
-    reciever = users.get(message_payload["reciever"])
+    receiver = users.get(message_payload["receiver"])
     sender = users.get(message_payload["sender"])
     msg_dict = {
         "sender": sender["username"],
@@ -157,18 +163,19 @@ def handle_send_msg(clientsocket, data):
         "temp_key": message_payload["temp_key"],
     }
 
-    reciever["message_queue"].append(msg_dict)
-    users[message_payload["reciever"]] = reciever
+    receiver["message_queue"].append(msg_dict)
+    users[message_payload["receiver"]] = receiver
     send_with_flag(clientsocket, "MSG_SENT", "\n**MESSAGE SENT SECURLEY!**\n".encode())
+    
+    #If the receiving client is currently connected then send over the message directly as well
+    if receiver["connection"] is not None: 
+        send_with_flag(receiver["connection"],"RECV_MSG","\n**NEW MESSAGE RECEIVED!**\n".encode())
+        nonce, ciphertext, tag = encrypt_with_aes_gcm(receiver["session_key"],json.dumps(msg_dict).encode())
+        send_aes_encrypted_data_with_flag(receiver["connection"], "STORE_MSG", nonce,tag,ciphertext)
   
-#Checks for logged in user messages and sends them over encrypted with shared session key
+#If a user checks their messages then empty the queue since they get it when they login
 def handle_read_msgs(user_id, clientsocket):
     user = users.get(user_id)
-    message_queue = user["message_queue"]
-    session_key = user["session_key"]
-    message_queue_json = json.dumps(message_queue)
-    nonce, ciphertext, tag = encrypt_with_aes_gcm(session_key, message_queue_json.encode())
-    send_aes_encrypted_data_with_flag(clientsocket, "MESSAGES", nonce, tag, ciphertext)
     user["message_queue"] = []
     users[user_id] = user
 
@@ -187,10 +194,8 @@ def handle_client(clientsocket, address):
                     aes_temp_reg_key = bytearray(decrypt_with_rsa(SERVER_PRIVATE_KEY, data))
                 case "REG":
                     handle_register(data, aes_temp_reg_key)
-                    print("\n**USER REGISTERED TO SERVER**\n")
                 case "LOGIN":
                     handle_login(data,clientsocket)
-                    print("\n***USER LOGGED IN!***\n")
                 case "SEND_MSG":
                     handle_send_msg(clientsocket,data)
                 case "READ_MSGS":
