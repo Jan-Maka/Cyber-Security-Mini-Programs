@@ -4,11 +4,12 @@ import base64
 import secrets
 import time
 import hmac
+import threading
 from pathlib import Path
 from common.rsa_utils import generate_rsa_key_pair, save_rsa_key_to_file, load_rsa_key_from_file, encrypt_with_rsa, decrypt_with_rsa, generate_x509_certificate, save_certificate, verify_certificate, get_user_public_key_from_certificate, verify_signatrue
 from common.user import User
 from common.socket_utils import send_with_flag, recv_with_flag, send_aes_encrypted_data_with_flag
-from common.aes_utils import unpack_aes_gcm_data,decrypt_with_aes_gcm, generate_aes_key, encrypt_with_aes_gcm
+from common.aes_utils import unpack_aes_gcm_data,decrypt_with_aes_gcm, generate_aes_key, encrypt_with_aes_gcm, secure_delete_key
 
 
 HOST = '127.0.0.1'      
@@ -91,6 +92,7 @@ def handle_check_user_pass(data, clientsocket):
 def handle_register(data,aes_temp_key):
     nonce,tag,ciphertext = unpack_aes_gcm_data(data)
     user_json = decrypt_with_aes_gcm(nonce, tag, ciphertext, aes_temp_key).decode()
+    secure_delete_key(aes_temp_key)
     user_data = json.loads(user_json)
     users[user_data["user_id"]] = user_data
     save_rsa_key_to_file(USER_PUBLIC_KEYS_STORE / f"{user_data['username']}_public.pem", user_data["public_key"])
@@ -146,7 +148,6 @@ def handle_login(data, clientsocket):
 def handle_send_msg(clientsocket, data):
     message_payload = json.loads(data)
     reciever = users.get(message_payload["reciever"])
-    print(  )
     sender = users.get(message_payload["sender"])
     msg_dict = {
         "sender": sender["username"],
@@ -171,8 +172,7 @@ def handle_read_msgs(user_id, clientsocket):
     user["message_queue"] = []
     users[user_id] = user
 
-while True:
-    clientsocket, address = server.accept()
+def handle_client(clientsocket, address):
     aes_temp_reg_key = None
     try:
         while True:
@@ -184,7 +184,7 @@ while True:
                 case "CHECK_PASS":
                     handle_check_user_pass(data,clientsocket)
                 case "REG_KEY":
-                    aes_temp_reg_key = decrypt_with_rsa(SERVER_PRIVATE_KEY, data)
+                    aes_temp_reg_key = bytearray(decrypt_with_rsa(SERVER_PRIVATE_KEY, data))
                 case "REG":
                     handle_register(data, aes_temp_reg_key)
                     print("\n**USER REGISTERED TO SERVER**\n")
@@ -203,5 +203,11 @@ while True:
     except Exception as e:
         print(f"Unexpected error: {e}")
         clientsocket.close()
+
+
+while True:
+    clientsocket, address = server.accept()
+    client_thread = threading.Thread(target=handle_client, args=(clientsocket,address), daemon=True)
+    client_thread.start()    
 
     
