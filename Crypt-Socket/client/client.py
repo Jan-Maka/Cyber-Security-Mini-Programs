@@ -161,6 +161,7 @@ def register():
 
     print("\n**REGISTRATION COMPLETE**\n")
 
+#Handles the reading of messages
 def read_messages():
     print("\n**USER MESSAGES**\n")
     send_with_flag(server_sock, "READ_MSGS", logged_in_user["user_id"].encode())
@@ -174,7 +175,7 @@ def read_messages():
         secure_delete_key(temp_msg_key)
 
         signed_data = json.dumps({
-            "content": message["content"],
+            "content": User.hash_message(message["content"]),
             "timestamp": message["timestamp"]
         }).encode()
         
@@ -196,6 +197,7 @@ def read_messages():
 
     print("\n**END OF MESSAGES**\n")
 
+#Handles the sending of messages
 def send_message():
     print("\n**SEND MESSAGE TO USER**\n")
 
@@ -208,7 +210,7 @@ def send_message():
     user_message = input("Enter the message for user: ")
     time_stamp = int(time.time())
     data_to_sign = json.dumps({
-        "content": user_message,
+        "content": User.hash_message(user_message),
         "timestamp": time_stamp
     }).encode()
 
@@ -238,6 +240,7 @@ def send_message():
     flag, data = wait_for_flag("MSG_SENT")
     if flag == "MSG_SENT":  print(data.decode())
 
+#If a user is logged in then add message to queue
 def handle_recv_message(data):
     nonce, tag, ciphertext = unpack_aes_gcm_data(data)
     msg = decrypt_with_aes_gcm(nonce,tag,ciphertext,session_key)

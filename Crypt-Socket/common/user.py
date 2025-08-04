@@ -22,6 +22,10 @@ class User:
         return hashlib.sha256(username.encode()).hexdigest()
     
     @staticmethod
+    def hash_message(message):
+        return hashlib.sha256(message.encode()).hexdigest()
+    
+    @staticmethod
     def hash_password(password):
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
